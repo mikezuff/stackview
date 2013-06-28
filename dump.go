@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/wsxiaoys/terminal"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -71,7 +72,19 @@ func (dmp *Dump) Append(line string) error {
 	return nil
 }
 
-func (dmp *Dump) Walk(funcs *FunctionSearch) {
+// Interpret the stack dump using the given symbol table.
+// Unless limits are -1, limit the dump to the given range.
+func (dmp *Dump) Walk(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
+	var ll int64 = math.MinInt64
+	if lowerLimit > 0 {
+		ll = lowerLimit - (lowerLimit % 16)
+	}
+
+	var ul int64 = math.MaxInt64
+	if upperLimit > 0 {
+		ul = upperLimit + (16 - (upperLimit % 16))
+	}
+
 	syms := make([]string, 0, 4)
 
 	funcs.Top()
@@ -81,6 +94,14 @@ func (dmp *Dump) Walk(funcs *FunctionSearch) {
 
 		byteOffset := i * 4
 		addr := dmp.start + int64(byteOffset)
+
+		if addr < ll {
+			continue
+		}
+		if addr >= ul {
+			fmt.Println()
+			return
+		}
 
 		if byteOffset%16 == 0 {
 			fmt.Printf("\n0x%08x:  ", addr)

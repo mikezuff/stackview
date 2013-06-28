@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 )
 
 func exit(err error) {
@@ -14,7 +15,7 @@ func exit(err error) {
 		fmt.Println(err)
 	}
 
-	fmt.Printf("Usage: stackeval <elfBinary> <stackDump>\n")
+	fmt.Printf("Usage: stackeval <elfBinary> <stackDump> [lowerLimit] [upperLimit]\n")
 	os.Exit(-1)
 
 }
@@ -22,12 +23,33 @@ func exit(err error) {
 const targetFunction = "intRteOk"
 const targetAddr = 0xbfdd1a
 
+var (
+	dumpLimitLower int64 = -1
+	dumpLimitUpper int64 = -1
+)
+
 //const targetFunction = "sysAuxClkEnable"
 //const targetAddr = 0x308c8b
 
 func main() {
 	if len(os.Args) < 3 {
 		exit(errors.New("Incorrect args"))
+	}
+
+	if len(os.Args) > 3 {
+		if len(os.Args) != 5 {
+			exit(errors.New("Upper and lower limit required if limits are provided"))
+		}
+
+		var err error
+		dumpLimitLower, err = strconv.ParseInt(os.Args[3], 0, 64)
+		if err != nil {
+			exit(fmt.Errorf("Error parsing lower limit: %s", err))
+		}
+		dumpLimitUpper, err = strconv.ParseInt(os.Args[4], 0, 64)
+		if err != nil {
+			exit(fmt.Errorf("Error parsing upper limit: %s", err))
+		}
 	}
 
 	elfBinaryName := os.Args[1]
@@ -65,7 +87,7 @@ func main() {
 		fmt.Printf("Ignoring %s for now.\n", dumpFileName)
 	} else {
 		stackDump := readDump(dumpFileName)
-		stackDump.Walk(funcs)
+		stackDump.Walk(funcs, dumpLimitLower, dumpLimitUpper)
 	}
 }
 
