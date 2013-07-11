@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"debug/elf"
 	"fmt"
 	"github.com/wsxiaoys/terminal"
 	"math"
@@ -10,6 +11,7 @@ import (
 )
 
 type Dump struct {
+	complete bool
 	start    int64
 	nextAddr int64
 	buf      []uint32
@@ -18,6 +20,10 @@ type Dump struct {
 // Expects format:
 // 0x01549090:  00000000 00000000 ffffff1f ffffffff   *................*
 func (dmp *Dump) Append(line string) error {
+	if dmp.complete {
+		return fmt.Errorf("Append to already completed dump at 0x%x", dmp.nextAddr)
+	}
+
 	if !strings.HasPrefix(line, "0x") || []byte(line)[10] != ':' {
 		// Ignore bad format
 		//fmt.Println("Ignoring %20s", line)
@@ -58,6 +64,9 @@ func (dmp *Dump) Append(line string) error {
 			dmp.buf = append(dmp.buf, uint32(a))
 		}
 	}
+	if i < 4 {
+		dmp.complete = true
+	}
 
 	//fmt.Printf("Read from dump %d at 0x%08x\n", i, addr)
 	e := len(dmp.buf)
@@ -72,51 +81,35 @@ func (dmp *Dump) Append(line string) error {
 	return nil
 }
 
-// Interpret the stack dump using the given symbol table.
-// Unless limits are -1, limit the dump to the given range.
-func (dmp *Dump) Walk(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
-	var ll int64 = math.MinInt64
-	if lowerLimit > 0 {
-		ll = lowerLimit - (lowerLimit % 16)
+func makeLowerLimit(n int64) int64 {
+	if n > 0 {
+		return n - (n % 16)
 	}
-
-	var ul int64 = math.MaxInt64
-	if upperLimit > 0 {
-		ul = upperLimit + (16 - (upperLimit % 16))
+	return math.MinInt64
+}
+func makeUpperLimit(n int64) int64 {
+	if n > 0 {
+		return n + (16 - (n % 16))
 	}
+	return math.MaxInt64
+}
 
-	syms := make([]string, 0, 4)
+func absDiff(a, b int64) int64 {
+	if a >= b {
+		return a - b
+	} else {
+		return b - a
+	}
+}
 
-	funcs.Top()
-
-	for i, v32 := range dmp.buf {
-		v := int64(v32)
-
-		byteOffset := i * 4
-		addr := dmp.start + int64(byteOffset)
-
-		if addr < ll {
-			continue
-		}
-		if addr >= ul {
-			fmt.Println()
-			return
-		}
-
+func (dmp *Dump) DumpStack(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
+	details := make([]string, 0, 4)
+	dmp.walk(funcs, lowerLimit, upperLimit, func(addr, byteOffset, v int64, symbol *elf.Symbol) {
+		offsetFromCurr := absDiff(v, addr)
 		if byteOffset%16 == 0 {
 			fmt.Printf("\n0x%08x:  ", addr)
 		}
 
-		var delta int64
-		if v >= addr {
-			delta = v - addr
-		} else {
-			delta = addr - v
-		}
-
-		symbol := funcs.Find(uint64(v))
-
-		const thresh = 0x1000
 		switch {
 		//case v == 0:
 		//fmt.Printf("%08x  ", v)
@@ -127,24 +120,55 @@ func (dmp *Dump) Walk(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
 			}
 
 			terminal.Stdout.Colorf(colorFmt+"%8.8s@{|}  ", symbol.Name)
-			syms = append(syms, fmt.Sprintf("%s{0x%x + 0x%x}", symbol.Name, symbol.Value, uint64(v)-symbol.Value))
-		case delta < thresh:
+			details = append(details, fmt.Sprintf("%s{0x%x + 0x%x}",
+				symbol.Name, symbol.Value, uint64(v)-symbol.Value))
+		case offsetFromCurr < maxStackOffset:
 			// Pointer into stack
 			sign := "+"
 			if v < addr {
 				sign = "-"
 			}
-			terminal.Stdout.Colorf("@{.bK}stk%s%04x@{|}  ", sign, delta)
+			terminal.Stdout.Colorf("@{.bK}stk%s%04x@{|}  ", sign, offsetFromCurr)
 		default:
 			fmt.Printf("%08x  ", v)
 		}
 
-		if i%4 == 3 && len(syms) > 0 {
-			fmt.Print(syms)
-			syms = syms[:0]
+		if byteOffset % 16 == 0xC && len(details) > 0 {
+			fmt.Print(details)
+			details = details[:0]
 		}
 
-	}
-
+	})
 	fmt.Println()
 }
+
+type DumpActionFn func(addr, byteOffset, v int64, symbol *elf.Symbol)
+
+// Interpret the stack dump using the given symbol table.
+// Unless limits are -1, limit the dump to the given range.
+func (dmp *Dump) walk(funcs *FunctionSearch, lowerLimit, upperLimit int64, actionFn DumpActionFn) {
+	ll := makeLowerLimit(lowerLimit)
+	ul := makeUpperLimit(upperLimit)
+
+	for i, v32 := range dmp.buf {
+		v := int64(v32)
+
+		byteOffset := int64(i) * 4
+		addr := dmp.start + int64(byteOffset)
+
+		// Act within limits
+		if addr < ll {
+			continue
+		}
+		if addr >= ul {
+			fmt.Println()
+			return
+		}
+
+		symbol := funcs.Find(uint64(v))
+
+		actionFn(addr, byteOffset, v, symbol)
+	}
+}
+
+const maxStackOffset = 0x1000

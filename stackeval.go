@@ -87,7 +87,7 @@ func main() {
 		fmt.Printf("Ignoring %s for now.\n", dumpFileName)
 	} else {
 		stackDump := readDump(dumpFileName)
-		stackDump.Walk(funcs, dumpLimitLower, dumpLimitUpper)
+		stackDump.DumpStack(funcs, dumpLimitLower, dumpLimitUpper)
 	}
 }
 

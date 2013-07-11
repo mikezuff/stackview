@@ -23,7 +23,7 @@ type FunctionSearch struct {
 	syms   Symbols
 }
 
-func (fs *FunctionSearch) Top() {
+func (fs *FunctionSearch) PrintTop() {
 	fs.lock.Lock()
 	defer fs.lock.Unlock()
 
