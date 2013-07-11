@@ -127,10 +127,14 @@ func (dmp *Dump) Walk(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
 			}
 
 			terminal.Stdout.Colorf(colorFmt+"%8.8s@{|}  ", symbol.Name)
-			syms = append(syms, fmt.Sprintf("%s{0x%x}", symbol.Name, symbol.Value))
+			syms = append(syms, fmt.Sprintf("%s{0x%x + 0x%x}", symbol.Name, symbol.Value, uint64(v)-symbol.Value))
 		case delta < thresh:
 			// Pointer into stack
-			terminal.Stdout.Colorf("@{.bK}stk%05x@{|}  ", delta)
+			sign := "+"
+			if v < addr {
+				sign = "-"
+			}
+			terminal.Stdout.Colorf("@{.bK}stk%s%04x@{|}  ", sign, delta)
 		default:
 			fmt.Printf("%08x  ", v)
 		}
