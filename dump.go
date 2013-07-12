@@ -102,6 +102,101 @@ func absDiff(a, b int64) int64 {
 	}
 }
 
+func symbolFmtString(symbol *elf.Symbol) string {
+	switch symbol.Section - elf.SHN_UNDEF {
+	case 1: // .text
+		if symbol.Size == 0 {
+			return "@{rY}"
+		}
+		return "@r"
+	case 2: // .data
+		return "@y"
+	case 3: // .bss
+		return "@g"
+	default:
+		return ""
+	}
+
+}
+
+func symbolPrint(symbol *elf.Symbol) {
+	colorFmt := symbolFmtString(symbol)
+	terminal.Stdout.Colorf(colorFmt+"%8.8s@{|}  ", symbol.Name)
+}
+
+func symbolOffsetString(symbol *elf.Symbol, base int64) string {
+	return fmt.Sprintf("%s{0x%x + 0x%x}", symbol.Name, symbol.Value, uint64(base)-symbol.Value)
+}
+
+type word struct {
+	V   int64
+	Rel bool
+}
+
+// Stack frame is reconstructed backwards from return address to next return address
+type stackFrame struct {
+	Caller *elf.Symbol
+	W      []word
+}
+
+func (dmp *Dump) TraceStack(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
+	stackStart := -1
+
+	frames := make([]*stackFrame, 0, 10)
+	lastFrameOpen := false
+
+	dmp.walk(funcs, lowerLimit, upperLimit,
+		func(addr, byteOffset, v int64, symbol *elf.Symbol) {
+			offsetFromCurr := absDiff(v, addr)
+
+			if v == 0xeeeeeeee {
+				if stackStart == -1 {
+					stackStart = int(addr)
+					fmt.Printf("0x%08x:  Blank stack start", addr)
+				}
+				return
+			} else if stackStart != -1 {
+				stackStart = -1
+				fmt.Printf("       Blank stack ended after %d bytes\n", int(addr)-stackStart)
+			}
+
+			fmt.Printf("0x%08x:  ", addr)
+			switch {
+			case symbol != nil:
+				terminal.Stdout.Colorf(symbolFmtString(symbol)+"%s@{|}",
+					symbolOffsetString(symbol, v))
+
+				frames = append(frames, &stackFrame{Caller: symbol})
+				lastFrameOpen = true
+			case offsetFromCurr < maxStackOffset:
+				// Pointer into stack
+				sign := "+"
+				if v < addr {
+					sign = "-"
+				}
+				terminal.Stdout.Colorf("@{.bK}stk%s%04x@{|}  ", sign, offsetFromCurr)
+
+				if lastFrameOpen {
+					frames[len(frames)-1].W = append(frames[len(frames)-1].W,
+						word{offsetFromCurr, true})
+				}
+			default:
+				fmt.Printf("%08x  ", v)
+				if lastFrameOpen {
+					frames[len(frames)-1].W = append(frames[len(frames)-1].W,
+						word{v, false})
+				}
+
+			}
+
+			fmt.Println()
+		})
+
+	if stackStart != -1 {
+		fmt.Println("Blank stack never ended??")
+	}
+}
+
 func (dmp *Dump) DumpStack(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
 	details := make([]string, 0, 4)
 	dmp.walk(funcs, lowerLimit, upperLimit, func(addr, byteOffset, v int64, symbol *elf.Symbol) {
@@ -114,14 +209,8 @@ func (dmp *Dump) DumpStack(funcs *FunctionSearch, lowerLimit, upperLimit int64) 
 		//case v == 0:
 		//fmt.Printf("%08x  ", v)
 		case symbol != nil:
-			colorFmt := "@r"
-			if symbol.Size == 0 {
-				colorFmt = "@{rY}"
-			}
-
-			terminal.Stdout.Colorf(colorFmt+"%8.8s@{|}  ", symbol.Name)
-			details = append(details, fmt.Sprintf("%s{0x%x + 0x%x}",
-				symbol.Name, symbol.Value, uint64(v)-symbol.Value))
+			symbolPrint(symbol)
+			details = append(details, symbolOffsetString(symbol, v))
 		case offsetFromCurr < maxStackOffset:
 			// Pointer into stack
 			sign := "+"
@@ -133,7 +222,7 @@ func (dmp *Dump) DumpStack(funcs *FunctionSearch, lowerLimit, upperLimit int64) 
 			fmt.Printf("%08x  ", v)
 		}
 
-		if byteOffset % 16 == 0xC && len(details) > 0 {
+		if byteOffset%16 == 0xC && len(details) > 0 {
 			fmt.Print(details)
 			details = details[:0]
 		}
@@ -150,6 +239,7 @@ func (dmp *Dump) walk(funcs *FunctionSearch, lowerLimit, upperLimit int64, actio
 	ll := makeLowerLimit(lowerLimit)
 	ul := makeUpperLimit(upperLimit)
 
+	ignoredSyms := make(map[string]string)
 	for i, v32 := range dmp.buf {
 		v := int64(v32)
 
@@ -167,8 +257,29 @@ func (dmp *Dump) walk(funcs *FunctionSearch, lowerLimit, upperLimit int64, actio
 
 		symbol := funcs.Find(uint64(v))
 
+		if symbol != nil && !symbolContains(symbol, v) {
+			ignoredSyms[symbol.Name] = fmt.Sprintf("Symbol last ignored at 0x%x: %v", v, symbol)
+			symbol = nil
+		}
+
 		actionFn(addr, byteOffset, v, symbol)
+	}
+
+    fmt.Println()
+	for _, s := range ignoredSyms {
+		fmt.Println(s)
 	}
 }
 
+func symbolContains(symbol *elf.Symbol, addr int64) bool {
+	ua := uint64(addr)
+	size := symbol.Size
+	if size == 0 {
+		size = maxEmptySymbolLength
+	}
+
+	return ua-symbol.Value < size
+}
+
+const maxEmptySymbolLength = 0x10000
 const maxStackOffset = 0x1000

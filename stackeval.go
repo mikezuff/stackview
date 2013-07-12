@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 )
 
 func exit(err error) {
@@ -23,37 +24,58 @@ func exit(err error) {
 const targetFunction = "intRteOk"
 const targetAddr = 0xbfdd1a
 
+//const targetFunction = "sysAuxClkEnable"
+//const targetAddr = 0x308c8b
+
 var (
 	dumpLimitLower int64 = -1
 	dumpLimitUpper int64 = -1
 )
 
-//const targetFunction = "sysAuxClkEnable"
-//const targetAddr = 0x308c8b
-
 func main() {
-	if len(os.Args) < 3 {
+	action := "dump"
+
+	args := os.Args
+
+	switch args[1] {
+	case "dump": // This is the default
+		args = args[1:]
+	case "trace":
+		action = "trace"
+		args = args[1:]
+	case "lookup":
+		panic("Lookup isn't really supported.")
+		action = "lookup"
+		args = args[1:]
+	case "loadonly":
+		action = "loadonly"
+		args = args[1:]
+
+	default:
+	}
+
+	if len(args) < 3 {
 		exit(errors.New("Incorrect args"))
 	}
 
-	if len(os.Args) > 3 {
-		if len(os.Args) != 5 {
+	if len(args) > 3 {
+		if len(args) != 5 {
 			exit(errors.New("Upper and lower limit required if limits are provided"))
 		}
 
 		var err error
-		dumpLimitLower, err = strconv.ParseInt(os.Args[3], 0, 64)
+		dumpLimitLower, err = strconv.ParseInt(args[3], 0, 64)
 		if err != nil {
 			exit(fmt.Errorf("Error parsing lower limit: %s", err))
 		}
-		dumpLimitUpper, err = strconv.ParseInt(os.Args[4], 0, 64)
+		dumpLimitUpper, err = strconv.ParseInt(args[4], 0, 64)
 		if err != nil {
 			exit(fmt.Errorf("Error parsing upper limit: %s", err))
 		}
 	}
 
-	elfBinaryName := os.Args[1]
-	dumpFileName := os.Args[2]
+	elfBinaryName := args[1]
+	dumpFileName := args[2]
 
 	fmt.Printf("Processing binary %s\n", elfBinaryName)
 	lf, err := elf.Open(elfBinaryName)
@@ -62,17 +84,20 @@ func main() {
 	}
 	defer lf.Close()
 
-	sec := lf.Section(".text")
-	if sec == nil {
-		fmt.Printf("No section text")
-	} else {
-		fmt.Println(sec)
-		fmt.Println("Section .text index ", sec.Offset)
-	}
+	printSectionIndex(lf, ".text")
+	printSectionIndex(lf, ".data")
+	printSectionIndex(lf, ".bss")
 
 	funcs := extractTextSymbols(lf)
 
-	if false {
+	switch action {
+	case "dump":
+		stackDump := readDump(dumpFileName)
+		stackDump.DumpStack(funcs, dumpLimitLower, dumpLimitUpper)
+	case "trace":
+		stackDump := readDump(dumpFileName)
+		stackDump.TraceStack(funcs, dumpLimitLower, dumpLimitUpper)
+	case "lookup":
 		// Test for some symbol to make sure it works
 		s := funcs.Find(targetAddr)
 		if s == nil || s.Name != targetFunction {
@@ -81,13 +106,10 @@ func main() {
 		} else {
 			fmt.Printf("Found Function %s @0x%x %d bytes\n", s.Name, s.Value, s.Size)
 		}
-	}
-
-	if false {
-		fmt.Printf("Ignoring %s for now.\n", dumpFileName)
-	} else {
-		stackDump := readDump(dumpFileName)
-		stackDump.DumpStack(funcs, dumpLimitLower, dumpLimitUpper)
+	case "loadonly":
+		// Done
+	default:
+		exit(fmt.Errorf("Uknown action %q", action))
 	}
 }
 
@@ -120,6 +142,16 @@ func readDump(fileName string) *Dump {
 	}
 }
 
+func printSectionIndex(f *elf.File, sectionName string) {
+	sec := f.Section(sectionName)
+	if sec == nil {
+		fmt.Printf("No section %s", sectionName)
+	} else {
+		fmt.Println(sec)
+		fmt.Printf("Section %s index %d\n", sectionName, sec.Offset)
+	}
+}
+
 func extractTextSymbols(lf *elf.File) *FunctionSearch {
 	syms, err := lf.Symbols()
 	if err != nil {
@@ -128,20 +160,42 @@ func extractTextSymbols(lf *elf.File) *FunctionSearch {
 
 	fs := &FunctionSearch{}
 
+	typeCount := make(map[elf.SymType]int)
+	loadedTypeCount := make(map[elf.SymType]int)
+	secCount := make(map[elf.SectionIndex]int)
 	for i, s := range syms {
 		if s.Name == targetFunction {
 			fmt.Printf("Found Function %s @0x%x %d bytes\n%v\n", s.Name, s.Value, s.Size, s)
 		}
-		if elf.ST_TYPE(s.Info) == elf.STT_FUNC {
-			if s.Section != elf.SHN_UNDEF+1 {
-				fmt.Printf("Ignoring symbol #%d %s, not in section 1.", i, s.Name)
+		symType := elf.ST_TYPE(s.Info)
+		symSec := s.Section - elf.SHN_UNDEF
+		typeCount[symType]++
+
+		switch symType {
+		case elf.STT_FUNC, elf.STT_OBJECT:
+			if strings.HasPrefix(s.Name, "_vx_offset") || s.Name == "cpuPwrIntEnterHook" {
+				fmt.Printf("Ignoring symbol #%d %s section %d type %s\n", i, s.Name, symSec, symType)
 				continue
 			}
-
+			loadedTypeCount[symType]++
+			secCount[symSec]++
 			fs.Add(&syms[i])
-		} else if (s.Value &^ 0xfff) == 0xbf0000 {
-			fmt.Println("Odd symbol: %s\n", s)
+		case elf.STT_FILE, elf.STT_NOTYPE, elf.STT_SECTION:
+			// Don't care.
+		default:
+			fmt.Printf("Ignoring symbol #%d %s section %d type %s\n", i, s.Name, symSec, symType)
 		}
+
+	}
+
+	fmt.Println("Saw symType / count seen / count loaded:")
+	for k, v := range typeCount {
+		fmt.Println(k, v, loadedTypeCount[k])
+	}
+
+	fmt.Println("Loaded section / num symbols from section:")
+	for k, v := range secCount {
+		fmt.Println(k, v)
 	}
 
 	return fs
