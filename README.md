@@ -4,6 +4,6 @@ stackview
 Simple tool that helps visualize symbols within a memory dump.
 
 
-![alt text](https://github.com/mikezuff/stackview/screenshot.png "Screenshot")
+![alt text](https://raw.github.com/mikezuff/stackview/master/screenshot.png "Screenshot")
 
 
