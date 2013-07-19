@@ -1,3 +1,6 @@
+// stackeval interprets a memory dump using symbols from a given ELF binary.
+// It prints using ANSI color codes. Piping into 'less -R' can be useful for review.
+// This has some specific tweaks for vxWorks binaries.
 package main
 
 import (
@@ -16,7 +19,10 @@ func exit(err error) {
 		fmt.Println(err)
 	}
 
-	fmt.Printf("Usage: stackeval <elfBinary> <stackDump> [lowerLimit] [upperLimit]\n")
+	fmt.Println("Usage: stackeval [command] <elfBinary> <stackDump> [lowerLimit] [upperLimit]")
+	fmt.Println()
+	fmt.Println("Example: 'stackeval dump vxWorks.st stack.dump'")
+	fmt.Println("         'stackeval trace vxWorks.st stack.dump 0x94be750 0x94be9f0'")
 	os.Exit(-1)
 
 }
@@ -154,13 +160,13 @@ func printSectionIndex(f *elf.File, sectionName string) {
 	}
 }
 
-func extractTextSymbols(lf *elf.File) *FunctionSearch {
+func extractTextSymbols(lf *elf.File) *SymbolTable {
 	syms, err := lf.Symbols()
 	if err != nil {
 		panic(err)
 	}
 
-	fs := &FunctionSearch{}
+	fs := &SymbolTable{}
 
 	typeCount := make(map[elf.SymType]int)
 	loadedTypeCount := make(map[elf.SymType]int)

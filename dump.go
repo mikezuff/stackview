@@ -103,6 +103,9 @@ func absDiff(a, b int64) int64 {
 }
 
 const (
+	maxEmptySymbolLength    = 0x10000
+	maxStackOffset          = 0x1000
+
 	colorSectionTextZeroLen = "@{rY}"
 	colorSectionText        = "@{kY}"
 	colorSectionData        = "@{kG}"
@@ -157,7 +160,7 @@ type stackFrame struct {
 	W      []word
 }
 
-func (dmp *Dump) TraceStack(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
+func (dmp *Dump) TraceStack(funcs *SymbolTable, lowerLimit, upperLimit int64) {
 	stackStart := -1
 
 	frames := make([]*stackFrame, 0, 10)
@@ -215,7 +218,7 @@ func (dmp *Dump) TraceStack(funcs *FunctionSearch, lowerLimit, upperLimit int64)
 	}
 }
 
-func (dmp *Dump) DumpStack(funcs *FunctionSearch, lowerLimit, upperLimit int64) {
+func (dmp *Dump) DumpStack(funcs *SymbolTable, lowerLimit, upperLimit int64) {
 	details := make([]string, 0, 4)
 	dmp.walk(funcs, lowerLimit, upperLimit, func(addr, byteOffset, v int64, symbol *elf.Symbol) {
 		offsetFromCurr := absDiff(v, addr)
@@ -253,7 +256,7 @@ type DumpActionFn func(addr, byteOffset, v int64, symbol *elf.Symbol)
 
 // Interpret the stack dump using the given symbol table.
 // Unless limits are -1, limit the dump to the given range.
-func (dmp *Dump) walk(funcs *FunctionSearch, lowerLimit, upperLimit int64, actionFn DumpActionFn) {
+func (dmp *Dump) walk(funcs *SymbolTable, lowerLimit, upperLimit int64, actionFn DumpActionFn) {
 	ll := makeLowerLimit(lowerLimit)
 	ul := makeUpperLimit(upperLimit)
 
@@ -298,6 +301,3 @@ func symbolContains(symbol *elf.Symbol, addr int64) bool {
 
 	return ua-symbol.Value < size
 }
-
-const maxEmptySymbolLength = 0x10000
-const maxStackOffset = 0x1000

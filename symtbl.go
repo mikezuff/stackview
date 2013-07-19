@@ -17,13 +17,13 @@ type ByAddr struct{ Symbols }
 
 func (s ByAddr) Less(i, j int) bool { return s.Symbols[i].Value < s.Symbols[j].Value }
 
-type FunctionSearch struct {
+type SymbolTable struct {
 	lock   sync.Mutex
 	sorted bool
 	syms   Symbols
 }
 
-func (fs *FunctionSearch) PrintTop() {
+func (fs *SymbolTable) PrintTop() {
 	fs.lock.Lock()
 	defer fs.lock.Unlock()
 
@@ -36,7 +36,7 @@ func (fs *FunctionSearch) PrintTop() {
 	}
 }
 
-func (fs *FunctionSearch) String() string {
+func (fs *SymbolTable) String() string {
 	buf := &bytes.Buffer{}
 	for _, s := range fs.syms {
 		fmt.Fprintln(buf, s)
@@ -44,7 +44,7 @@ func (fs *FunctionSearch) String() string {
 
 	return buf.String()
 }
-func (fs *FunctionSearch) Add(sym *elf.Symbol) {
+func (fs *SymbolTable) Add(sym *elf.Symbol) {
 	fs.lock.Lock()
 	defer fs.lock.Unlock()
 
@@ -52,7 +52,7 @@ func (fs *FunctionSearch) Add(sym *elf.Symbol) {
 	fs.syms = append(fs.syms, sym)
 }
 
-func (fs *FunctionSearch) Find(addr uint64) *elf.Symbol {
+func (fs *SymbolTable) Find(addr uint64) *elf.Symbol {
 	fs.lock.Lock()
 	defer fs.lock.Unlock()
 
