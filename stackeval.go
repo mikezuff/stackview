@@ -94,9 +94,11 @@ func main() {
 	case "dump":
 		stackDump := readDump(dumpFileName)
 		stackDump.DumpStack(funcs, dumpLimitLower, dumpLimitUpper)
+        PrintLegend()
 	case "trace":
 		stackDump := readDump(dumpFileName)
 		stackDump.TraceStack(funcs, dumpLimitLower, dumpLimitUpper)
+        PrintLegend()
 	case "lookup":
 		// Test for some symbol to make sure it works
 		s := funcs.Find(targetAddr)
@@ -164,15 +166,13 @@ func extractTextSymbols(lf *elf.File) *FunctionSearch {
 	loadedTypeCount := make(map[elf.SymType]int)
 	secCount := make(map[elf.SectionIndex]int)
 	for i, s := range syms {
-		if s.Name == targetFunction {
-			fmt.Printf("Found Function %s @0x%x %d bytes\n%v\n", s.Name, s.Value, s.Size, s)
-		}
 		symType := elf.ST_TYPE(s.Info)
 		symSec := s.Section - elf.SHN_UNDEF
 		typeCount[symType]++
 
 		switch symType {
 		case elf.STT_FUNC, elf.STT_OBJECT:
+			// These symbols are at addresses that show up often in memory, like 0 and 0xeeeeeeee
 			if strings.HasPrefix(s.Name, "_vx_offset") || s.Name == "cpuPwrIntEnterHook" {
 				fmt.Printf("Ignoring symbol #%d %s section %d type %s\n", i, s.Name, symSec, symType)
 				continue

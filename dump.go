@@ -102,19 +102,37 @@ func absDiff(a, b int64) int64 {
 	}
 }
 
+const (
+	colorSectionTextZeroLen = "@{rY}"
+	colorSectionText        = "@{kY}"
+	colorSectionData        = "@{kG}"
+	colorSectionBss         = "@{wG}"
+	colorSectionUnknown     = ""
+	colorLocalPointer       = "@{.bK}"
+)
+
+// PrintLegend prints a legend of the colors used in the dumps
+func PrintLegend() {
+	terminal.Stdout.Colorf(colorSectionTextZeroLen + ".text zero-length@{|}\n")
+	terminal.Stdout.Colorf(colorSectionText + ".text @{|}\n")
+	terminal.Stdout.Colorf(colorSectionData + ".data @{|}\n")
+	terminal.Stdout.Colorf(colorSectionBss + ".bss @{|}\n")
+	terminal.Stdout.Colorf(colorLocalPointer+"local pointer, within %d@{|}\n", maxStackOffset)
+}
+
 func symbolFmtString(symbol *elf.Symbol) string {
 	switch symbol.Section - elf.SHN_UNDEF {
 	case 1: // .text
 		if symbol.Size == 0 {
-			return "@{rY}"
+			return colorSectionTextZeroLen
 		}
-		return "@r"
+		return colorSectionText
 	case 2: // .data
-		return "@y"
+		return colorSectionData
 	case 3: // .bss
-		return "@g"
+		return colorSectionBss
 	default:
-		return ""
+		return colorSectionUnknown
 	}
 
 }
@@ -174,7 +192,7 @@ func (dmp *Dump) TraceStack(funcs *FunctionSearch, lowerLimit, upperLimit int64)
 				if v < addr {
 					sign = "-"
 				}
-				terminal.Stdout.Colorf("@{.bK}stk%s%04x@{|}  ", sign, offsetFromCurr)
+				terminal.Stdout.Colorf(colorLocalPointer+"stk%s%04x@{|}  ", sign, offsetFromCurr)
 
 				if lastFrameOpen {
 					frames[len(frames)-1].W = append(frames[len(frames)-1].W,
@@ -217,7 +235,7 @@ func (dmp *Dump) DumpStack(funcs *FunctionSearch, lowerLimit, upperLimit int64) 
 			if v < addr {
 				sign = "-"
 			}
-			terminal.Stdout.Colorf("@{.bK}stk%s%04x@{|}  ", sign, offsetFromCurr)
+			terminal.Stdout.Colorf(colorLocalPointer+"stk%s%04x@{|}  ", sign, offsetFromCurr)
 		default:
 			fmt.Printf("%08x  ", v)
 		}
@@ -265,7 +283,7 @@ func (dmp *Dump) walk(funcs *FunctionSearch, lowerLimit, upperLimit int64, actio
 		actionFn(addr, byteOffset, v, symbol)
 	}
 
-    fmt.Println()
+	fmt.Println()
 	for _, s := range ignoredSyms {
 		fmt.Println(s)
 	}
