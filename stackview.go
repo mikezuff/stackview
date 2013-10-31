@@ -34,15 +34,15 @@ const targetAddr = 0xbfdd1a
 //const targetAddr = 0x308c8b
 
 var (
-	dumpLimitLower int64 = -1
-	dumpLimitUpper int64 = -1
+	dumpLimitLower = uint64(0)
+	dumpLimitUpper = ^uint64(0)
 )
 
 func main() {
-	action := "dump"
 
 	args := os.Args
 
+	action := "dump"
 	switch args[1] {
 	case "dump": // This is the default
 		args = args[1:]
@@ -56,7 +56,6 @@ func main() {
 	case "loadonly":
 		action = "loadonly"
 		args = args[1:]
-
 	default:
 	}
 
@@ -70,11 +69,11 @@ func main() {
 		}
 
 		var err error
-		dumpLimitLower, err = strconv.ParseInt(args[3], 0, 64)
+		dumpLimitLower, err = strconv.ParseUint(args[3], 0, 64)
 		if err != nil {
 			exit(fmt.Errorf("Error parsing lower limit: %s", err))
 		}
-		dumpLimitUpper, err = strconv.ParseInt(args[4], 0, 64)
+		dumpLimitUpper, err = strconv.ParseUint(args[4], 0, 64)
 		if err != nil {
 			exit(fmt.Errorf("Error parsing upper limit: %s", err))
 		}
@@ -100,11 +99,11 @@ func main() {
 	case "dump":
 		stackDump := readDump(dumpFileName)
 		stackDump.DumpStack(funcs, dumpLimitLower, dumpLimitUpper)
-        PrintLegend()
+		PrintLegend()
 	case "trace":
 		stackDump := readDump(dumpFileName)
 		stackDump.TraceStack(funcs, dumpLimitLower, dumpLimitUpper)
-        PrintLegend()
+		PrintLegend()
 	case "lookup":
 		// Test for some symbol to make sure it works
 		s := funcs.Find(targetAddr)
@@ -155,7 +154,7 @@ func printSectionIndex(f *elf.File, sectionName string) {
 	if sec == nil {
 		fmt.Printf("No section %s", sectionName)
 	} else {
-		fmt.Println(sec)
+		fmt.Println(*sec)
 		fmt.Printf("Section %s index %d\n", sectionName, sec.Offset)
 	}
 }
@@ -177,16 +176,20 @@ func extractTextSymbols(lf *elf.File) *SymbolTable {
 		typeCount[symType]++
 
 		switch symType {
+		case elf.STT_SECTION:
+			//fmt.Println("Section", s)
 		case elf.STT_FUNC, elf.STT_OBJECT:
 			// These symbols are at addresses that show up often in memory, like 0 and 0xeeeeeeee
-			if strings.HasPrefix(s.Name, "_vx_offset") || s.Name == "cpuPwrIntEnterHook" {
+			if strings.HasSuffix(s.Name, "_hook") { // strings.HasPrefix(s.Name, "_vx_offset") || s.Name == "cpuPwrIntEnterHook" {
 				fmt.Printf("Ignoring symbol #%d %s section %d type %s\n", i, s.Name, symSec, symType)
 				continue
 			}
+
+			//fmt.Printf("Sym %s sec %d TYPE %d %v\n", s.Name, symSec, symType, s)
 			loadedTypeCount[symType]++
 			secCount[symSec]++
 			fs.Add(&syms[i])
-		case elf.STT_FILE, elf.STT_NOTYPE, elf.STT_SECTION:
+		case elf.STT_FILE, elf.STT_NOTYPE:
 			// Don't care.
 		default:
 			fmt.Printf("Ignoring symbol #%d %s section %d type %s\n", i, s.Name, symSec, symType)
