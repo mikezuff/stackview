@@ -100,11 +100,11 @@ func main() {
 	case "dump":
 		stackDump := readDump(dumpFileName)
 		stackDump.DumpStack(funcs, dumpLimitLower, dumpLimitUpper)
-        PrintLegend()
+		PrintLegend()
 	case "trace":
 		stackDump := readDump(dumpFileName)
 		stackDump.TraceStack(funcs, dumpLimitLower, dumpLimitUpper)
-        PrintLegend()
+		PrintLegend()
 	case "lookup":
 		// Test for some symbol to make sure it works
 		s := funcs.Find(targetAddr)
@@ -144,10 +144,11 @@ func readDump(fileName string) *Dump {
 				return dump
 			}
 
-			exit(fmt.Errorf("Error reading %s, line %d: ", fileName, lineNum, err))
+			exit(fmt.Errorf("Error reading %s, line %d: %v", fileName, lineNum, err))
 		}
 
 	}
+	panic("Unreachable")
 }
 
 func printSectionIndex(f *elf.File, sectionName string) {

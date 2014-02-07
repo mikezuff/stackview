@@ -100,11 +100,12 @@ func absDiff(a, b int64) int64 {
 	} else {
 		return b - a
 	}
+	panic("Unreachable")
 }
 
 const (
-	maxEmptySymbolLength    = 0x10000
-	maxStackOffset          = 0x1000
+	maxEmptySymbolLength = 0x10000
+	maxStackOffset       = 0x1000
 
 	colorSectionTextZeroLen = "@{rY}"
 	colorSectionText        = "@{kY}"
@@ -137,7 +138,7 @@ func symbolFmtString(symbol *elf.Symbol) string {
 	default:
 		return colorSectionUnknown
 	}
-
+    panic("unreachable")
 }
 
 func symbolPrint(symbol *elf.Symbol) {
