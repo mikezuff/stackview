@@ -121,7 +121,7 @@ const (
 	colorSectionText        = "@{kY}"
 	colorSectionData        = "@{kG}"
 	colorSectionBss         = "@{wG}"
-	colorSectionUnknown     = ""
+	colorSectionUnknown     = "@{cB}"
 	colorLocalPointer       = "@{.bK}"
 )
 
@@ -131,6 +131,7 @@ func PrintLegend() {
 	terminal.Stdout.Colorf(colorSectionText + ".text @{|}\n")
 	terminal.Stdout.Colorf(colorSectionData + ".data @{|}\n")
 	terminal.Stdout.Colorf(colorSectionBss + ".bss @{|}\n")
+	terminal.Stdout.Colorf(colorSectionUnknown + "unknown @{|}\n")
 	terminal.Stdout.Colorf(colorLocalPointer+"local pointer, within %d@{|}\n", maxStackOffset)
 }
 
@@ -147,7 +148,12 @@ func symbolFmtStringMips(symbol *elf.Symbol) string {
 			return colorSectionTextZeroLen
 		}
 		return colorSectionText
-	case 1: // .data
+	//case 16: // Both thread local and shared?
+	//case 14: // Thread local
+	//case 8: // DPS_IN_PRIVATE_MEMORY
+	//case 6: // Rmios lib data?
+	//case 5: // static const?
+	case 1, 5, 6, 8, 14, 16: // .data
 		return colorSectionData
 	//case 3: // .bss
 	//return colorSectionBss
@@ -155,6 +161,7 @@ func symbolFmtStringMips(symbol *elf.Symbol) string {
 		return colorSectionUnknown
 	}
 
+	panic("unreachable")
 }
 func symbolFmtStringVxWorks(symbol *elf.Symbol) string {
 	switch symbol.Section - elf.SHN_UNDEF {
@@ -175,7 +182,12 @@ func symbolFmtStringVxWorks(symbol *elf.Symbol) string {
 
 func symbolPrint(symbol *elf.Symbol) {
 	colorFmt := symbolFmtString(symbol)
-	terminal.Stdout.Colorf(colorFmt+"%16.16s@{|}  ", symbol.Name)
+	showSectionIndex := false
+	if showSectionIndex {
+		terminal.Stdout.Colorf(colorFmt+"%16.16s (sec %d) @{|}  ", symbol.Name, symbol.Section-elf.SHN_UNDEF)
+	} else {
+		terminal.Stdout.Colorf(colorFmt+"%16.16s@{|}  ", symbol.Name)
+	}
 }
 
 func symbolOffsetString(symbol *elf.Symbol, base uint64) string {
