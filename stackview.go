@@ -1,4 +1,4 @@
-// stackeval interprets a memory dump using symbols from a given ELF binary.
+// stackview interprets a memory dump using symbols from a given ELF binary.
 // It prints using ANSI color codes. Piping into 'less -R' can be useful for review.
 // This has some specific tweaks for vxWorks binaries.
 package main
@@ -19,10 +19,10 @@ func exit(err error) {
 		fmt.Println(err)
 	}
 
-	fmt.Println("Usage: stackeval [command] <elfBinary> <stackDump> [lowerLimit] [upperLimit]")
+	fmt.Println("Usage: stackview [command] <elfBinary> <stackDump> [lowerLimit] [upperLimit]")
 	fmt.Println()
-	fmt.Println("Example: 'stackeval dump vxWorks.st stack.dump'")
-	fmt.Println("         'stackeval trace vxWorks.st stack.dump 0x94be750 0x94be9f0'")
+	fmt.Println("Example: 'stackview dump vxWorks.st stack.dump'")
+	fmt.Println("         'stackview trace vxWorks.st stack.dump 0x94be750 0x94be9f0'")
 	os.Exit(-1)
 
 }
