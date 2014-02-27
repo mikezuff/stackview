@@ -1,11 +1,10 @@
-package main
+package dump
 
 import (
 	"bytes"
 	"debug/elf"
 	"fmt"
 	"sort"
-	"sync"
 )
 
 type Symbols []*elf.Symbol
@@ -18,15 +17,11 @@ type ByAddr struct{ Symbols }
 func (s ByAddr) Less(i, j int) bool { return s.Symbols[i].Value < s.Symbols[j].Value }
 
 type SymbolTable struct {
-	lock   sync.Mutex
 	sorted bool
 	syms   Symbols
 }
 
 func (fs *SymbolTable) PrintTop() {
-	fs.lock.Lock()
-	defer fs.lock.Unlock()
-
 	if fs.sorted == false {
 		sort.Sort(ByAddr{fs.syms})
 		fs.sorted = true
@@ -45,17 +40,11 @@ func (fs *SymbolTable) String() string {
 	return buf.String()
 }
 func (fs *SymbolTable) Add(sym *elf.Symbol) {
-	fs.lock.Lock()
-	defer fs.lock.Unlock()
-
 	fs.sorted = false
 	fs.syms = append(fs.syms, sym)
 }
 
 func (fs *SymbolTable) Find(addr uint64) *elf.Symbol {
-	fs.lock.Lock()
-	defer fs.lock.Unlock()
-
 	if fs.sorted == false {
 		sort.Sort(ByAddr{fs.syms})
 		fs.sorted = true

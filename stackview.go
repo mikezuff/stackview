@@ -1,223 +1,193 @@
 // stackview interprets a memory dump using symbols from a given ELF binary.
 // It prints using ANSI color codes. Piping into 'less -R' can be useful for review.
-// This has some specific tweaks for vxWorks binaries.
+// See Hacking section in README.md if you have problems.
 package main
 
 import (
-	"bufio"
 	"debug/elf"
-	"errors"
+	"encoding/binary"
+	"flag"
 	"fmt"
-	"io"
+	"github.com/mikezuff/stackview/dump"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
-func exit(err error) {
+// IgnoreSymbol returns true if the symbol should be ignored if its address is found in a dump.
+// This is useful for symbols that are at common addresses like 0 and 0xeeeeeeee.
+func IgnoreSymbol(s elf.Symbol) bool {
+	return strings.HasSuffix(s.Name, "_hook") || // RMIOS
+		strings.HasPrefix(s.Name, "_vx_offset") || s.Name == "cpuPwrIntEnterHook" // vxworks
+}
+
+// DataLineRE should match a dump line that contains an absolute offset for the dump. Dumps are expected to be contiguous. The first submatch is the offset.
+var DataLineRE = regexp.MustCompile(`^(?:0x)?([[:xdigit:]]+): *((?: *[[:xdigit:]])+) *[|*].{8} ?.{8}[|*]`)
+
+// OffsetLineRE should match dump lines containing memory values. The first submatch should be the offset of the first byte in the line. The second submatch should be the memory value text in word sizes of 1 to 8 bytes.
+var OffsetLineRE = regexp.MustCompile(`^(?:Physaddr:|Phys:)(?:0x)?([[:xdigit:]]+)`)
+
+type GeneralDumpParser struct{}
+
+func (g GeneralDumpParser) IsAbsOffsetLine(line []byte) (bool, uint64) {
+	submatch := OffsetLineRE.FindSubmatch(line)
+	if submatch == nil {
+		return false, 0
+	}
+
+	offset, err := strconv.ParseUint(string(submatch[1]), 16, 64)
+	if err != nil {
+		panic(fmt.Sprintf("Regex OffsetLineRE matched line %q but offset parse failed %s",
+			string(line), err))
+	}
+
+	return true, offset
+}
+
+func (g GeneralDumpParser) IsDataLine(line []byte) (bool, uint64, []byte) {
+	submatch := DataLineRE.FindSubmatch(line)
+	if submatch == nil {
+		return false, 0, nil
+	}
+
+	offset, err := strconv.ParseUint(string(submatch[1]), 16, 64)
+	if err != nil {
+		panic(fmt.Sprintf("Regex DataLineRE matched line %q but offset parse failed %s",
+			string(line), err))
+	}
+
+	return true, offset, submatch[2]
+}
+
+var flagVerbose = flag.Bool("verbose", false, "")
+var flagDumpSectionsOnly = flag.Bool("show-sections", false, "Print the elf sections, then quit.")
+
+func errExit(err error) {
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	fmt.Println("Usage: stackview [command] <elfBinary> <stackDump> [lowerLimit] [upperLimit]")
-	fmt.Println()
-	fmt.Println("Example: 'stackview dump vxWorks.st stack.dump'")
-	fmt.Println("         'stackview trace vxWorks.st stack.dump 0x94be750 0x94be9f0'")
+	printUsage()
 	os.Exit(-1)
-
 }
 
-const targetFunction = "intRteOk"
-const targetAddr = 0xbfdd1a
-
-//const targetFunction = "sysAuxClkEnable"
-//const targetAddr = 0x308c8b
-
-var (
-	dumpLimitLower = uint64(0)
-	dumpLimitUpper = ^uint64(0)
-)
+func printUsage() {
+	fmt.Println("Usage: stackview <elfBinary> <stackDump>")
+	flag.PrintDefaults()
+	fmt.Println()
+	fmt.Println("Example: 'stackview vxWorks.st stack.dump'")
+}
 
 func main() {
+	flag.Usage = printUsage
+	flag.Parse()
+	args := flag.Args()
 
-	args := os.Args
-
-	action := "dump"
-	switch args[1] {
-	case "dump": // This is the default
-		args = args[1:]
-	case "trace":
-		action = "trace"
-		args = args[1:]
-	case "lookup":
-		panic("Lookup isn't really supported.")
-		action = "lookup"
-		args = args[1:]
-	case "loadonly":
-		action = "loadonly"
-		args = args[1:]
-	default:
+	if len(args) < 1 {
+		errExit(fmt.Errorf("Not enough arguments."))
 	}
+	elfBinaryName := args[0]
 
-	if len(args) < 3 {
-		exit(errors.New("Incorrect args"))
-	}
-
-	if len(args) > 3 {
-		if len(args) != 5 {
-			exit(errors.New("Upper and lower limit required if limits are provided"))
-		}
-
-		var err error
-		dumpLimitLower, err = strconv.ParseUint(args[3], 0, 64)
-		if err != nil {
-			exit(fmt.Errorf("Error parsing lower limit: %s", err))
-		}
-		dumpLimitUpper, err = strconv.ParseUint(args[4], 0, 64)
-		if err != nil {
-			exit(fmt.Errorf("Error parsing upper limit: %s", err))
-		}
-	}
-
-	elfBinaryName := args[1]
-	dumpFileName := args[2]
-
-	fmt.Printf("Processing binary %s\n", elfBinaryName)
-	lf, err := elf.Open(elfBinaryName)
+	elfFile, err := elf.Open(elfBinaryName)
 	if err != nil {
-		exit(err)
+		errExit(err)
 	}
-	defer lf.Close()
+	defer elfFile.Close()
 
-	printSectionIndex(lf, ".text")
-	printSectionIndex(lf, ".data")
-	printSectionIndex(lf, ".bss")
+	if *flagDumpSectionsOnly {
+		printSections(elfFile)
+		os.Exit(0)
+	}
 
-	funcs := extractTextSymbols(lf)
+	if len(args) != 2 {
+		errExit(fmt.Errorf("Not enough arguments."))
+	}
+	dumpFileName := args[1]
 
-	switch action {
-	case "dump":
-		stackDump := readDump(dumpFileName)
-		stackDump.DumpStack(funcs, dumpLimitLower, dumpLimitUpper)
-		PrintLegend()
-	case "trace":
-		stackDump := readDump(dumpFileName)
-		stackDump.TraceStack(funcs, dumpLimitLower, dumpLimitUpper)
-		PrintLegend()
-	case "lookup":
-		// Test for some symbol to make sure it works
-		s := funcs.Find(targetAddr)
-		if s == nil || s.Name != targetFunction {
-			panic(fmt.Errorf("Expected %s, got %v at 0x%x",
-				targetFunction, s, targetAddr))
-		} else {
-			fmt.Printf("Found Function %s @0x%x %d bytes\n", s.Name, s.Value, s.Size)
-		}
-	case "loadonly":
-		// Done
+	syms := extractSymbols(elfFile)
+
+	var archSize int
+	switch elfFile.FileHeader.Class {
+	case elf.ELFCLASS64:
+		archSize = 64
+	case elf.ELFCLASSNONE:
+		fmt.Println("ELF class doesn't specify architecture size. Assuming 32-bit.")
+		fallthrough
+	case elf.ELFCLASS32: // ok
+		archSize = 32
 	default:
-		exit(fmt.Errorf("Uknown action %q", action))
+		errExit(fmt.Errorf("Unhandled ELF EI_CLASS %d", elfFile.FileHeader.Class))
 	}
-}
 
-func readDump(fileName string) *Dump {
-	f, err := os.Open(fileName)
+	var byteOrder binary.ByteOrder
+	switch elfFile.FileHeader.Data {
+	case elf.ELFDATA2LSB:
+		byteOrder = binary.LittleEndian
+	case elf.ELFDATA2MSB:
+		byteOrder = binary.BigEndian
+	default:
+		errExit(fmt.Errorf("ELF byte order unspecified"))
+	}
+
+	fmt.Printf("Dumping symbols from %s %d-bit %s\n", elfBinaryName, archSize, byteOrder)
+
+	f, err := os.Open(dumpFileName)
 	if err != nil {
-		exit(err)
+		errExit(err)
+	}
+	defer f.Close()
+
+	var g GeneralDumpParser
+	stackDump, err := dump.ReadDumpFrom(f, byteOrder, archSize, &g)
+	if err != nil {
+		errExit(fmt.Errorf("Error loading stack dump %s: %s", dumpFileName, err))
 	}
 
-	in := bufio.NewReader(f)
-	dump := &Dump{}
-
-	lineNum := 0
-	for {
-		lineNum++
-		line, err := in.ReadString('\n')
-		appendError := dump.Append(line)
-		if appendError != nil {
-			exit(fmt.Errorf("Corrupt dump line %d: %s", lineNum, appendError))
-		}
-
-		if err != nil {
-			if err == io.EOF {
-				return dump
-			}
-
-			exit(fmt.Errorf("Error reading %s, line %d: %v", fileName, lineNum, err))
-		}
-
-	}
-	panic("Unreachable")
+	stackDump.TranslateStack(syms, 0, ^uint64(0), elfFile.Sections)
+	dump.PrintLegend()
 }
 
-func printSectionIndex(f *elf.File, sectionName string) {
-	sec := f.Section(sectionName)
-	if sec == nil {
-		fmt.Printf("No section %s", sectionName)
-	} else {
-		fmt.Println(*sec)
-		fmt.Printf("Section %s index %d\n", sectionName, sec.Offset)
+func printSections(elfFile *elf.File) {
+	for i, sec := range elfFile.Sections {
+		fmt.Println(i, sec.Name, sec.Type, sec.Flags)
 	}
 }
 
-func extractTextSymbols(lf *elf.File) *SymbolTable {
-	syms, err := lf.Symbols()
+func extractSymbols(elfFile *elf.File) *dump.SymbolTable {
+	syms, err := elfFile.Symbols()
 	if err != nil {
 		panic(err)
 	}
 
-	fs := &SymbolTable{}
+	fs := &dump.SymbolTable{}
 
-	typeCount := make(map[elf.SymType]int)
 	loadedTypeCount := make(map[elf.SymType]int)
 	secCount := make(map[elf.SectionIndex]int)
 	for i, s := range syms {
 		symType := elf.ST_TYPE(s.Info)
 		symSec := s.Section - elf.SHN_UNDEF
-		typeCount[symType]++
 
 		switch symType {
-		case elf.STT_SECTION:
-			//fmt.Println("Section", s)
 		case elf.STT_FUNC, elf.STT_OBJECT:
-			// These symbols are at addresses that show up often in memory, like 0 and 0xeeeeeeee
-			if strings.HasSuffix(s.Name, "_hook") { // strings.HasPrefix(s.Name, "_vx_offset") || s.Name == "cpuPwrIntEnterHook" {
-				fmt.Printf("Ignoring symbol #%d %s section %d type %s\n", i, s.Name, symSec, symType)
+			if IgnoreSymbol(s) {
+				if *flagVerbose {
+					fmt.Printf("Ignoring symbol #%d %s section %d type %s at %x\n",
+						i, s.Name, symSec, symType, s.Value)
+				}
 				continue
 			}
 
-			//fmt.Printf("Sym %s sec %d TYPE %d %v\n", s.Name, symSec, symType, s)
 			loadedTypeCount[symType]++
 			secCount[symSec]++
 			fs.Add(&syms[i])
-		case elf.STT_FILE, elf.STT_NOTYPE:
-			// Don't care.
+		case elf.STT_FILE, elf.STT_SECTION, elf.STT_NOTYPE:
+			// ignore these quietly
 		default:
 			fmt.Printf("Ignoring symbol #%d %s section %d type %s\n", i, s.Name, symSec, symType)
 		}
 
 	}
 
-	fmt.Println("Saw symType / count seen / count loaded:")
-	for k, v := range typeCount {
-		fmt.Println(k, v, loadedTypeCount[k])
-	}
-
-	fmt.Println("Loaded section / num symbols from section:")
-	for k, v := range secCount {
-		fmt.Println(k, v)
-	}
-
 	return fs
-}
-
-func dumpTable(lf *elf.File) {
-	syms, err := lf.Symbols()
-	if err != nil {
-		panic(err)
-	}
-
-	for _, s := range syms {
-		fmt.Println(s.Name, s.Value, s.Size, s.Section, s.Info, elf.ST_TYPE(s.Info))
-	}
 }
